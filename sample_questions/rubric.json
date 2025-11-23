@@ -1,0 +1,33 @@
+{
+  "weights": {
+    "communication": 0.4,
+    "depth": 0.4,
+    "relevance": 0.2
+  },
+  "thresholds": {
+    "short_answer_tokens": 12,
+    "good_depth_matches": 2
+  },
+  "depth_keywords": [
+    "database",
+    "cache",
+    "index",
+    "latency",
+    "scale",
+    "sharding",
+    "replication",
+    "thread",
+    "async",
+    "consistency",
+    "availability",
+    "partition",
+    "throughput",
+    "caching",
+    "load balancer"
+  ],
+  "messages": {
+    "structure_tip": "Try structuring answers with STAR (Situation, Task, Action, Result).",
+    "detail_tip": "Add concrete technical details: components, trade-offs, and numbers.",
+    "on_topic_tip": "Keep answers focused on the asked problem; brief examples are fine."
+  }
+}
