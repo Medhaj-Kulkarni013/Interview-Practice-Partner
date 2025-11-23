@@ -236,7 +236,7 @@ class InterviewAgent:
                 if prev_questions:
                     question_prompt += (
                         f"Previous questions asked:\n"
-                        + "\n".join(f"- {q}" for q in prev_questions[-3:])  # Last 3 questions
+                        + "\n".join(f"- {q}" for q in prev_questions[-10:])  # Last 10 questions
                         + "\n\nGenerate a NEW, different question.\n"
                     )
             
