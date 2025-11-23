@@ -2,27 +2,18 @@
 """
 InterviewAgent:
  - Generates questions dynamically using Groq AI
- - Uses Groq for follow-up questions and feedback when available
- - Falls back to rule-based feedback when Groq disabled
+ - Uses Groq for follow-up questions and feedback (pure agentic)
  - Tracks full session history
+ - Requires Groq API for all operations
 """
-
-import json
-from pathlib import Path
 from typing import Optional
 
 # Handle imports for both package and direct execution contexts
 try:
     from .llm_clients import groq_enabled, groq_generate
-    from .feedback_engine import simple_scores, scores_to_feedback
 except ImportError:
     # Fallback for direct execution
     from llm_clients import groq_enabled, groq_generate
-    from feedback_engine import simple_scores, scores_to_feedback
-
-# Find project root and construct paths
-_PROJECT_ROOT = Path(__file__).parent.parent
-RUBRIC_PATH = _PROJECT_ROOT / "sample_questions" / "rubric.json"
 
 
 def _format_role_name(role: str) -> str:
@@ -30,10 +21,8 @@ def _format_role_name(role: str) -> str:
     return role.replace("_", " ").title()  # "software_engineer" -> "Backend Engineer"
 
 
-def detect_agentic_case(answer: str, candidate_history=None):
+def detect_agentic_case(answer: str):
     """Detect answer edge cases for agentic/clarifying interviewer response."""
-    if candidate_history is None:
-        candidate_history = []
     a = (answer or "").strip().lower()
     if not a:
         return "EMPTY"
@@ -66,23 +55,143 @@ class InterviewAgent:
         
         self.role = role
         self.history = []   # Stores all Q&A messages
-        self.rubric = self._load_rubric()
-        self.current_main_question = None
         self.followup_count = 0
         self.agentic_case_counter = {}
 
-    def _load_rubric(self) -> dict:
-        """Load rubric with error handling."""
-        if not RUBRIC_PATH.exists():
-            raise FileNotFoundError(
-                f"Rubric file not found at {RUBRIC_PATH}. "
-                "Please ensure sample_questions/rubric.json exists."
-            )
+    def _generate_ai_followup(self, question: str, answer: str) -> Optional[str]:
+        """
+        Generate an AI-powered follow-up question that probes deeper into the candidate's answer.
+        Returns None if Groq is unavailable or if we should move to the next main question.
+        """
+        if not groq_enabled():
+            return None
+        
+        # Limit follow-ups to 2 per main question to keep interview flowing
+        if self.followup_count >= 2:
+            return None
+        
         try:
-            with open(RUBRIC_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in rubric file: {e}") from e
+            role_display = _format_role_name(self.role)
+            
+            # Build context from recent history
+            recent_context = []
+            for msg in self.history[-6:]:  # Last 3 Q&A pairs
+                if msg.get("role") == "interviewer":
+                    recent_context.append(f"Interviewer: {msg['text']}")
+                elif msg.get("role") == "candidate":
+                    recent_context.append(f"Candidate: {msg['text']}")
+            
+            followup_prompt = (
+                f"You are a technical interviewer conducting a mock interview for a {role_display} position.\n\n"
+                f"Current question: {question}\n"
+                f"Candidate's answer: {answer}\n\n"
+            )
+            
+            if recent_context:
+                followup_prompt += "Recent conversation:\n" + "\n".join(recent_context[-4:]) + "\n\n"
+            
+            followup_prompt += (
+                f"Generate ONE follow-up question that:\n"
+                f"- Is EASY to MEDIUM difficulty - appropriate for freshers and entry-level candidates\n"
+                f"- Probes deeper but keeps it SIMPLE - asks for clarification or a basic example\n"
+                f"- Asks for simple explanations, basic examples, or fundamental understanding\n"
+                f"- Is specific to what they mentioned (not generic)\n"
+                f"- Helps assess their basic understanding and communication skills\n"
+                f"- Should NOT require advanced knowledge, complex problem-solving, or deep technical analysis\n"
+                f"- Can be answered in 30-60 seconds with basic knowledge\n\n"
+                f"Examples of good follow-ups (keep them simple):\n"
+                f"- 'Can you give me a simple example of that?'\n"
+                f"- 'Can you explain that in simpler terms?'\n"
+                f"- 'What would be a basic use case for that?'\n"
+                f"- 'How would you explain this to someone new to the topic?'\n\n"
+                f"AVOID complex follow-ups about trade-offs, edge cases, or advanced scenarios.\n"
+                f"Keep it FRESH-FRIENDLY and EASY.\n\n"
+                f"Respond with ONLY the follow-up question, no additional text or explanation."
+            )
+            
+            followup = groq_generate(followup_prompt, max_tokens=120, temperature=0.7)
+            followup = followup.strip()
+            
+            # Clean up common prefixes
+            for prefix in ["Follow-up:", "Follow-up question:", "Q:", "Question:"]:
+                if followup.lower().startswith(prefix.lower()):
+                    followup = followup[len(prefix):].strip()
+            
+            if followup and len(followup) > 10:  # Ensure it's a real question
+                self.followup_count += 1
+                self.history.append({"role": "interviewer", "text": followup})
+                return followup
+            
+            return None
+        except Exception as e:
+            # If AI generation fails, return None to fall back to next main question
+            return None
+
+    def _generate_ai_feedback(self, question: str, answer: str) -> list:
+        """
+        Generate AI-powered feedback on the candidate's answer.
+        Returns a list of feedback bullet points.
+        Pure agentic - requires Groq API.
+        """
+        if not groq_enabled():
+            raise RuntimeError(
+                "Groq API is required for feedback generation. "
+                "Please set GROQ_API_KEY in your .env file."
+            )
+        
+        try:
+            role_display = _format_role_name(self.role)
+            
+            feedback_prompt = (
+                f"You are an expert interview coach providing constructive feedback.\n\n"
+                f"Role: {role_display}\n"
+                f"Question: {question}\n"
+                f"Candidate's Answer: {answer}\n\n"
+                f"Provide constructive feedback on:\n"
+                f"1. Communication: clarity, structure, conciseness\n"
+                f"2. Technical Knowledge: depth, accuracy, relevance\n"
+                f"3. Areas for Improvement: specific, actionable suggestions\n\n"
+                f"Format your response as 3-5 bullet points. Each bullet should:\n"
+                f"- Start with a strength or area to improve\n"
+                f"- Be specific and actionable\n"
+                f"- Be encouraging and constructive\n"
+                f"- Focus on what would make this answer stronger\n\n"
+                f"Example format:\n"
+                f"- Strong communication — you clearly explained the concept with good structure.\n"
+                f"- Consider adding more technical details about implementation specifics.\n"
+                f"- Great use of examples — try to quantify the impact when possible.\n\n"
+                f"Provide feedback now (bullet points only, no additional text):"
+            )
+            
+            feedback_text = groq_generate(feedback_prompt, max_tokens=300, temperature=0.5)
+            feedback_text = feedback_text.strip()
+            
+            # Parse feedback into bullet points
+            bullets = []
+            for line in feedback_text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                # Remove common bullet markers
+                for marker in ["-", "•", "*", "1.", "2.", "3.", "4.", "5."]:
+                    if line.startswith(marker):
+                        line = line[len(marker):].strip()
+                if line:
+                    bullets.append(line)
+            
+            # If parsing failed, return the text as a single bullet
+            if not bullets:
+                bullets = [feedback_text] if feedback_text else []
+            
+            # If still empty, raise error (pure agentic - no fallback)
+            if not bullets:
+                raise RuntimeError("AI feedback generation returned empty result.")
+            
+            return bullets[:5]  # Limit to 5 bullets max
+            
+        except Exception as e:
+            # Re-raise with context (pure agentic - no fallback)
+            raise RuntimeError(f"Failed to generate AI feedback: {e}") from e
 
     # ------------------------------------------
     # Get the next question
@@ -103,12 +212,19 @@ class InterviewAgent:
             question_prompt = (
                 f"You are a technical interviewer conducting a mock interview for a {role_display} position.\n"
                 f"Generate ONE interview question that is:\n"
-                f"- Appropriate for a {role_display} role at entry-level or fresher (0-1 years experience)\n"
-                f"- Focused on core concepts, fundamentals, or general ability\n"
-                f"- Should NOT require prior job experience or advanced knowledge\n"
-                f"- Easy enough for someone who just graduated or is switching careers\n"
+                f"- EASY to MEDIUM difficulty only - suitable for freshers and entry-level candidates (0-1 years experience)\n"
+                f"- Focused on BASIC concepts, fundamentals, and simple practical knowledge\n"
+                f"- Should NOT require prior job experience, advanced knowledge, or complex problem-solving\n"
+                f"- Easy enough for someone who just graduated, is a student, or switching careers\n"
+                f"- Keep it SIMPLE - avoid complex topics, system design, architecture, or advanced algorithms\n"
+                f"- Ask about basic definitions, simple examples, or fundamental understanding\n"
                 f"- Different from questions already asked\n"
-                f"- Can be answered in 1-2 minutes (should not require essay or system design answers)\n\n"
+                f"- Can be answered in 1-2 minutes with basic knowledge (no essay or deep technical analysis required)\n\n"
+                f"Examples of appropriate questions:\n"
+                f"- 'What is [basic concept] and why is it useful?'\n"
+                f"- 'Can you explain [simple topic] in your own words?'\n"
+                f"- 'What are the basic steps to [simple task]?'\n"
+                f"- 'Give me a simple example of [fundamental concept]'\n\n"
             )
             
             # Add context about previous questions to avoid repetition
@@ -135,8 +251,7 @@ class InterviewAgent:
                     q = q[len(prefix):].strip()
             
             if q:
-                self.current_main_question = q  # Track the last true main question
-                self.followup_count = 0         # Reset follow-up count for this new question
+                self.followup_count = 0  # Reset follow-up count for this new question
                 self.history.append({"role": "interviewer", "text": q})
                 return q
             else:
@@ -173,10 +288,9 @@ class InterviewAgent:
 
         self.history.append({"role": "candidate", "text": answer})
         followup = None
-        feedback_bullets = []
 
         # =============== AGENTIC EDGE CASES ===============
-        persona_case = detect_agentic_case(answer, [msg["text"] for msg in self.history if msg.get("role") == "candidate"])
+        persona_case = detect_agentic_case(answer)
         clarifying = None
         persona_case_map = {
             "EMPTY": "Don't worry, just give your best try—even a short answer helps!",
@@ -196,12 +310,21 @@ class InterviewAgent:
                 "feedback": ["Provide a more complete answer to get valuable feedback!"],
                 "history": self.history,
             }
+        
         # ====================================================
-        # ========== RULE-BASED FALLBACK FEEDBACK ============
+        # ========== AI-POWERED FEEDBACK GENERATION =========
         # ====================================================
-        if not feedback_bullets:
-            scores = simple_scores(answer, rubric=self.rubric)
-            feedback_bullets = scores_to_feedback(scores, rubric=self.rubric)
+        feedback_bullets = self._generate_ai_feedback(question_text, answer)
+        
+        # ====================================================
+        # ========== AI-POWERED FOLLOW-UP GENERATION =========
+        # ====================================================
+        # Generate follow-up question (method handles limit checking)
+        # Works for both main questions and follow-ups
+        followup = self._generate_ai_followup(question_text, answer)
+        
+        # If no follow-up was generated (maxed out or error), followup is None
+        # The UI will then call get_next_question() to move to the next main question
 
         # Return fully structured output
         return {

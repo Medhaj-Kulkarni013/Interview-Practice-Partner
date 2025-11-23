@@ -29,8 +29,6 @@ GROQ_API_KEY_RAW = os.getenv("GROQ_API_KEY", "")
 # tolerate accidental surrounding quotes and whitespace
 GROQ_API_KEY = GROQ_API_KEY_RAW.strip().strip('"').strip("'")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-
-# HTTP endpoint for fallback (Groq's public API)
 GROQ_HTTP_URL = os.getenv("GROQ_HTTP_URL", "https://api.groq.com/openai/v1/chat/completions")
 
 def groq_enabled():
