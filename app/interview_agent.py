@@ -151,7 +151,7 @@ class InterviewAgent:
                 f"1. Communication: clarity, structure, conciseness\n"
                 f"2. Technical Knowledge: depth, accuracy, relevance\n"
                 f"3. Areas for Improvement: specific, actionable suggestions\n\n"
-                f"Format your response as 3-5 bullet points. Each bullet should:\n"
+                f"Format your response as 3(not more than that) bullet points. Each bullet should:\n"
                 f"- Start with a strength or area to improve\n"
                 f"- Be specific and actionable\n"
                 f"- Be encouraging and constructive\n"
