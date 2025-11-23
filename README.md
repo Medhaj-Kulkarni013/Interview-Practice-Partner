@@ -166,7 +166,8 @@ Interview-Practice-Partner/
    The app will open in your browser at `http://localhost:8501`
 
 7. **Deployment**
-   i have deployed the application on streamlit.io 'https://interview-practice-partner-k7rwaoattaglu4afwewupp.streamlit.app/'
+
+   I have deployed it using streamlit.io at https://interview-practice-partner-k7rwaoattaglu4afwewupp.streamlit.app/
 
 ## 🎮 Usage
 
